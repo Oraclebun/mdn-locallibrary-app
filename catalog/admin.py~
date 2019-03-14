@@ -1,0 +1,83 @@
+from django.contrib import admin
+from catalog.models import Author, Genre, Book, BookInstance
+import csv
+from django.http import HttpResponse
+from django import forms
+from django.urls import path
+from django.shortcuts import render
+from io import TextIOWrapper
+
+class ExportCsvMixin: 
+    def export_as_csv(self,request,queryset):
+        meta = self.model._meta
+        field_names = [field.name for field in meta.fields]
+        response = HttpResponse(content_type='text/csv') 
+        response['Content-Disposition'] = 'attachment; filename={}.csv'.format(meta) 
+        writer = csv.writer(response)
+        
+        writer.writerow(field_names) 
+        for obj in queryset:
+            row = writer.writerow([getattr(obj, field) for field in field_names]) 
+        return response
+        
+        export_as_csv.short_description = "Export Selected"
+
+class CsvImportForm(forms.Form):
+    csv_file = forms.FileField()
+
+#Define the admin class
+class AuthorAdmin(admin.ModelAdmin):
+    list_display = ('last_name','first_name','date_of_birth','date_of_death')
+    fields = ['first_name', 'last_name', ('date_of_birth', 'date_of_death')]
+
+class BooksInstanceInline(admin.TabularInline):
+    model = BookInstance
+
+#Register the Admin classes for Book using the decorator
+@admin.register(Book)
+class BookAdmin(admin.ModelAdmin,ExportCsvMixin):
+    change_list_template = "admin/catalog/book/book_change_list.html"
+    actions = ["export_as_csv"]
+    list_display = ('title', 'author', 'display_genre')
+    inlines = [BooksInstanceInline]    
+
+    def get_urls(self):
+        urls = super().get_urls()
+        my_urls=[
+            path('import-csv/',self.import_csv),
+        ]
+        return my_urls+urls
+    
+    def import_csv(self,request):
+        if request.method == "POST":
+            csv_file = TextIOWrapper(request.FILES["csv_file"].file,encoding='ASCII')
+            csv_bulk = csv.reader(csv_file)
+            for row in csv_bulk:
+            #Create Objects from passed in data
+                book=Book.objects.create(id = row[0], title=row[1], summary=row[3], isbn=row[4])
+
+            self.message_user(request,"Your csv file has been successfully uploaded")
+            return redirect("..")
+        form = CsvImportForm()
+        payload = {"form":form}
+        return render(request, "admin/catalog/book/csv_form.html", payload)
+
+#Register the Admin classes for BookInstance using the decorator
+@admin.register(BookInstance)
+class BookInstanceAdmin(admin.ModelAdmin):
+    list_filter = ('status','due_back')
+
+    fieldsets = (
+        (None, {'fields': ('book', 'imprint', 'id')}),
+        ('Availability', { 'fields': ('status', 'due_back')}),
+                )
+        
+ 
+# Register your models here.
+#admin.site.register(Book)
+#admin.site.register(Author)
+admin.site.register(Genre)
+#admin.site.register(BookInstance)
+
+#Register the admin class with the associated model
+admin.site.register(Author,AuthorAdmin)
